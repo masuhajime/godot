@@ -102,6 +102,11 @@ class GodotPinJoint2D : public GodotJoint2D {
 	bool motor_enabled = false;
 	bool angular_limit_enabled = false;
 
+	ObjectID initial_A_id = ObjectID();
+	real_t initial_A_friction = 0.0;
+	ObjectID initial_B_id = ObjectID();
+	real_t initial_B_friction = 0.0;
+
 public:
 	virtual PhysicsServer2D::JointType get_type() const override { return PhysicsServer2D::JOINT_TYPE_PIN; }
 

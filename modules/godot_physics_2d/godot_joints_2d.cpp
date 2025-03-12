@@ -32,6 +32,11 @@
 
 #include "godot_space_2d.h"
 
+// デバッグ関数のプロトタイプ宣言
+void debug_angle_calculation(const char *prefix, real_t angle_rad);
+void debug_value_output(const char *prefix, const String &value);
+void debug_int_output(const char *prefix, int value);
+
 //based on chipmunk joint constraints
 
 /* Copyright (c) 2007 Scott Lembcke
@@ -180,18 +185,42 @@ bool GodotPinJoint2D::pre_solve(real_t p_step) {
 	}
 	i_sum = 1.0 / (i_sum_local);
 	if (angular_limit_enabled && B) {
-		Vector2 diff_vector = B->get_transform().get_origin() - A->get_transform().get_origin();
-		diff_vector = diff_vector.rotated(-initial_angle);
-		real_t dist = diff_vector.angle();
+		// デバッグ出力
+		// Vector2 diff_vector = B->get_transform().get_origin() - A->get_transform().get_origin();// original
+		real_t diff_vector = B->get_transform().get_rotation() - A->get_transform().get_rotation();
+		// debug output B->get_transform().get_origin(), A->get_transform().get_origin()
+		// debug_value_output("A->get_transform().get_origin().angle()", String::num(A->get_transform().get_origin().angle()));
+		// diff_vector = diff_vector.rotated(-initial_angle);
+		real_t dist = diff_vector - initial_angle;
 		real_t pdist = 0.0;
+		// real_t distdeg = Math::rad_to_deg(dist);
+		// debug_value_output("distdeg", String::num(distdeg));
 		if (dist > angular_limit_upper) {
+			// debug_angle_calculation("上限角度 (angular_limit_upper)", angular_limit_upper);
+			/////////////////////////// 上限角度 (angular_limit_upper): 0.523599 rad (30.000015 deg)
+			debug_angle_calculation("upper limit (pdist)", dist);
+			// debug output string "initial_A_id, A->get_instance_id"
+			// debug_value_output("initial_A_id, A->get_instance_id", itos(uint64_t(initial_A_id)) + ", " + itos(uint64_t(A->get_instance_id())));
+			// debug output string "initial_B_id, B->get_instance_id"
+			// debug_value_output("initial_B_id, B->get_instance_id", itos(uint64_t(initial_B_id)) + ", " + itos(uint64_t(B->get_instance_id())));
 			pdist = dist - angular_limit_upper;
 		} else if (dist < angular_limit_lower) {
+			// debug_angle_calculation("下限角度 (angular_limit_lower)", angular_limit_lower);
+			/////////////////////////// 下限角度 (angular_limit_lower): -0.523599 rad (-30.000015 deg)
+			debug_angle_calculation("lower limit (pdist)", dist);
 			pdist = dist - angular_limit_lower;
 		}
-		real_t error_bias = Math::pow(1.0 - 0.15, 60.0);
+		// https://github.com/slembcke/Chipmunk2D/blob/master/src/cpConstraint.c#L50C14-L50C23
+		real_t error_bias = Math::pow(1.0 - 0.1, 60.0);
+		// error_bias = get_max_bias();
 		// Calculate bias velocity.
+		// p_step = 0.0166666675359
+		// log bias
+		debug_value_output("bias", String::num(error_bias));
 		bias_velocity = -CLAMP((-1.0 - Math::pow(error_bias, p_step)) * pdist / p_step, -get_max_bias(), get_max_bias());
+		// bias_velocity = CLAMP((1.0 - Math::pow(error_bias, p_step)) * pdist / p_step, -get_max_bias(), get_max_bias());
+
+		bias_velocity *= 10;
 		// If the bias velocity is 0, the joint is not at a limit.
 		if (bias_velocity >= -CMP_EPSILON && bias_velocity <= CMP_EPSILON) {
 			j_acc = 0;
@@ -318,13 +347,28 @@ GodotPinJoint2D::GodotPinJoint2D(const Vector2 &p_pos, GodotBody2D *p_body_a, Go
 		GodotJoint2D(_arr, p_body_b ? 2 : 1) {
 	A = p_body_a;
 	B = p_body_b;
+
+	initial_A_friction = p_body_a->get_friction();
+	initial_B_friction = p_body_b ? p_body_b->get_friction() : 0.0;
+	initial_A_id = p_body_a->get_instance_id();
+	initial_B_id = p_body_b ? p_body_b->get_instance_id() : ObjectID();
+	debug_value_output("init", "init");
+	debug_value_output("initial_friction_A", String::num(initial_A_friction));
+	debug_value_output("initial_friction_B", String::num(initial_B_friction));
+	debug_value_output("initial_A_id", itos(uint64_t(initial_A_id)));
+	debug_value_output("initial_B_id", itos(uint64_t(initial_B_id)));
+	// ID値のデバッグ出力は一時的に無効化
+	// debug_value_output("initial_A_id", initial_A_id);
+	// debug_value_output("initial_B_id", initial_B_id);
+
 	anchor_A = p_body_a->get_inv_transform().xform(p_pos);
 	anchor_B = p_body_b ? p_body_b->get_inv_transform().xform(p_pos) : p_pos;
 
 	p_body_a->add_constraint(this, 0);
 	if (p_body_b) {
 		p_body_b->add_constraint(this, 1);
-		initial_angle = A->get_transform().get_origin().angle_to_point(B->get_transform().get_origin());
+		initial_angle = B->get_transform().get_rotation() - A->get_transform().get_rotation();
+		debug_value_output("initial_angle", String::num(initial_angle) + ", " + String::num(Math::rad_to_deg(initial_angle)));
 	}
 }
 
@@ -592,4 +636,49 @@ GodotDampedSpringJoint2D::GodotDampedSpringJoint2D(const Vector2 &p_anchor_a, co
 
 	A->add_constraint(this, 0);
 	B->add_constraint(this, 1);
+}
+
+void debug_value_output(const char *prefix, const String &value) {
+	static FILE *f = nullptr;
+	if (!f) {
+		f = fopen("/tmp/godot_debug.txt", "w");
+	}
+
+	if (f) {
+		fprintf(f, "%s: %s\n", prefix, value.utf8().get_data());
+		fflush(f);
+	} else {
+		debug_value_output("################# debug_value_output", "f is nullptr");
+	}
+}
+
+void debug_int_output(const char *prefix, int value) {
+	static FILE *f = nullptr;
+	if (!f) {
+		f = fopen("/tmp/godot_debug.txt", "w");
+	}
+
+	if (f) {
+		fprintf(f, "%s: %d\n", prefix, value);
+		fflush(f);
+	} else {
+		debug_value_output("################# debug_int_output", "f is nullptr");
+	}
+}
+
+void debug_angle_calculation(const char *prefix, real_t angle_rad) {
+	static FILE *f = nullptr;
+	if (!f) {
+		f = fopen("/tmp/godot_angle_debug.txt", "w");
+	}
+
+	if (f) {
+		fprintf(f, "%s: %.6f rad (%.6f deg)\n",
+				prefix,
+				angle_rad,
+				Math::rad_to_deg(angle_rad));
+		fflush(f); // すぐに書き込みを反映
+	} else {
+		debug_value_output("################# debug_angle_calculation", "f is nullptr");
+	}
 }
