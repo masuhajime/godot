@@ -170,7 +170,9 @@ inline Vector2 custom_cross(const Vector2 &p_vec, real_t p_other) {
 	return Vector2(p_other * p_vec.y, -p_other * p_vec.x);
 }
 
+// https://github.com/godotengine/godot/blob/master/modules/godot_physics_2d/godot_joints_2d.cpp#L168
 bool GodotPinJoint2D::pre_solve(real_t p_step) {
+	// debug_value_output("pre_solve", String::num(p_step));
 	// Apply accumulated impulse.
 	if (dynamic_A) {
 		A->apply_impulse(-P, rA);
@@ -186,41 +188,26 @@ bool GodotPinJoint2D::pre_solve(real_t p_step) {
 	i_sum = 1.0 / (i_sum_local);
 	if (angular_limit_enabled && B) {
 		// デバッグ出力
-		// Vector2 diff_vector = B->get_transform().get_origin() - A->get_transform().get_origin();// original
 		real_t diff_vector = B->get_transform().get_rotation() - A->get_transform().get_rotation();
-		// debug output B->get_transform().get_origin(), A->get_transform().get_origin()
-		// debug_value_output("A->get_transform().get_origin().angle()", String::num(A->get_transform().get_origin().angle()));
-		// diff_vector = diff_vector.rotated(-initial_angle);
 		real_t dist = diff_vector - initial_angle;
 		real_t pdist = 0.0;
-		// real_t distdeg = Math::rad_to_deg(dist);
-		// debug_value_output("distdeg", String::num(distdeg));
+
 		if (dist > angular_limit_upper) {
-			// debug_angle_calculation("上限角度 (angular_limit_upper)", angular_limit_upper);
-			/////////////////////////// 上限角度 (angular_limit_upper): 0.523599 rad (30.000015 deg)
-			debug_angle_calculation("upper limit (pdist)", dist);
-			// debug output string "initial_A_id, A->get_instance_id"
-			// debug_value_output("initial_A_id, A->get_instance_id", itos(uint64_t(initial_A_id)) + ", " + itos(uint64_t(A->get_instance_id())));
-			// debug output string "initial_B_id, B->get_instance_id"
-			// debug_value_output("initial_B_id, B->get_instance_id", itos(uint64_t(initial_B_id)) + ", " + itos(uint64_t(B->get_instance_id())));
 			pdist = dist - angular_limit_upper;
 		} else if (dist < angular_limit_lower) {
-			// debug_angle_calculation("下限角度 (angular_limit_lower)", angular_limit_lower);
-			/////////////////////////// 下限角度 (angular_limit_lower): -0.523599 rad (-30.000015 deg)
-			debug_angle_calculation("lower limit (pdist)", dist);
 			pdist = dist - angular_limit_lower;
 		}
+
 		// https://github.com/slembcke/Chipmunk2D/blob/master/src/cpConstraint.c#L50C14-L50C23
 		real_t error_bias = Math::pow(1.0 - 0.1, 60.0);
 		// error_bias = get_max_bias();
 		// Calculate bias velocity.
 		// p_step = 0.0166666675359
 		// log bias
-		debug_value_output("bias", String::num(error_bias));
+		// debug_value_output("bias", String::num(error_bias));
 		bias_velocity = -CLAMP((-1.0 - Math::pow(error_bias, p_step)) * pdist / p_step, -get_max_bias(), get_max_bias());
 		// bias_velocity = CLAMP((1.0 - Math::pow(error_bias, p_step)) * pdist / p_step, -get_max_bias(), get_max_bias());
 
-		bias_velocity *= 10;
 		// If the bias velocity is 0, the joint is not at a limit.
 		if (bias_velocity >= -CMP_EPSILON && bias_velocity <= CMP_EPSILON) {
 			j_acc = 0;
@@ -236,6 +223,8 @@ bool GodotPinJoint2D::pre_solve(real_t p_step) {
 }
 
 void GodotPinJoint2D::solve(real_t p_step) {
+	// log
+	// debug_value_output("p_step", String::num(p_step));
 	// Compute relative velocity.
 	Vector2 vA = A->get_linear_velocity() - custom_cross(rA - A->get_center_of_mass(), A->get_angular_velocity());
 
@@ -258,6 +247,7 @@ void GodotPinJoint2D::solve(real_t p_step) {
 		// Compute normal impulse.
 		real_t j = -(bias_velocity + wr) * i_sum;
 		real_t j_old = j_acc;
+
 		// Only enable the limits if we have to.
 		if (angular_limit_enabled && is_joint_at_limit) {
 			if (bias_velocity < 0.0) {
@@ -269,6 +259,7 @@ void GodotPinJoint2D::solve(real_t p_step) {
 			j_acc = CLAMP(j_old + j, -j_max, j_max);
 		}
 		j = j_acc - j_old;
+
 		A->apply_torque_impulse(-j * A->get_inv_inertia());
 		B->apply_torque_impulse(j * B->get_inv_inertia());
 	}
