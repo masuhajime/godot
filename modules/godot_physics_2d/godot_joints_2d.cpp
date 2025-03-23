@@ -32,11 +32,6 @@
 
 #include "godot_space_2d.h"
 
-// デバッグ関数のプロトタイプ宣言
-void debug_angle_calculation(const char *prefix, real_t angle_rad);
-void debug_value_output(const char *prefix, const String &value);
-void debug_int_output(const char *prefix, int value);
-
 //based on chipmunk joint constraints
 
 /* Copyright (c) 2007 Scott Lembcke
@@ -171,8 +166,8 @@ inline Vector2 custom_cross(const Vector2 &p_vec, real_t p_other) {
 }
 
 // https://github.com/godotengine/godot/blob/master/modules/godot_physics_2d/godot_joints_2d.cpp#L168
+
 bool GodotPinJoint2D::pre_solve(real_t p_step) {
-	// debug_value_output("pre_solve", String::num(p_step));
 	// Apply accumulated impulse.
 	if (dynamic_A) {
 		A->apply_impulse(-P, rA);
@@ -187,27 +182,18 @@ bool GodotPinJoint2D::pre_solve(real_t p_step) {
 	}
 	i_sum = 1.0 / (i_sum_local);
 	if (angular_limit_enabled && B) {
-		// デバッグ出力
 		real_t diff_vector = B->get_transform().get_rotation() - A->get_transform().get_rotation();
 		real_t dist = diff_vector - initial_angle;
 		real_t pdist = 0.0;
-
 		if (dist > angular_limit_upper) {
 			pdist = dist - angular_limit_upper;
 		} else if (dist < angular_limit_lower) {
 			pdist = dist - angular_limit_lower;
 		}
 
-		// https://github.com/slembcke/Chipmunk2D/blob/master/src/cpConstraint.c#L50C14-L50C23
 		real_t error_bias = Math::pow(1.0 - 0.1, 60.0);
-		// error_bias = get_max_bias();
 		// Calculate bias velocity.
-		// p_step = 0.0166666675359
-		// log bias
-		// debug_value_output("bias", String::num(error_bias));
-		bias_velocity = -CLAMP((-1.0 - Math::pow(error_bias, p_step)) * pdist / p_step, -get_max_bias(), get_max_bias());
-		// bias_velocity = CLAMP((1.0 - Math::pow(error_bias, p_step)) * pdist / p_step, -get_max_bias(), get_max_bias());
-
+		bias_velocity = CLAMP((-Math::pow(error_bias, p_step)) * pdist / p_step, -get_max_bias(), get_max_bias());
 		// If the bias velocity is 0, the joint is not at a limit.
 		if (bias_velocity >= -CMP_EPSILON && bias_velocity <= CMP_EPSILON) {
 			j_acc = 0;
@@ -223,8 +209,6 @@ bool GodotPinJoint2D::pre_solve(real_t p_step) {
 }
 
 void GodotPinJoint2D::solve(real_t p_step) {
-	// log
-	// debug_value_output("p_step", String::num(p_step));
 	// Compute relative velocity.
 	Vector2 vA = A->get_linear_velocity() - custom_cross(rA - A->get_center_of_mass(), A->get_angular_velocity());
 
@@ -234,37 +218,27 @@ void GodotPinJoint2D::solve(real_t p_step) {
 	} else {
 		rel_vel = -vA;
 	}
-	// Angle limits joint solve step taken from https://github.com/slembcke/Chipmunk2D/blob/d0239ef4599b3688a5a336373f7d0a68426414ba/src/cpRotaryLimitJoint.c
-	if ((angular_limit_enabled || motor_enabled) && B) {
-		// Compute relative rotational velocity.
-		real_t wr = B->get_angular_velocity() - A->get_angular_velocity();
-		// Motor solve part taken from https://github.com/slembcke/Chipmunk2D/blob/d0239ef4599b3688a5a336373f7d0a68426414ba/src/cpSimpleMotor.c
-		if (motor_enabled) {
-			wr -= motor_target_velocity;
-		}
-		real_t j_max = jn_max;
-
-		// Compute normal impulse.
-		real_t j = -(bias_velocity + wr) * i_sum;
-		real_t j_old = j_acc;
-
-		// Only enable the limits if we have to.
-		if (angular_limit_enabled && is_joint_at_limit) {
-			if (bias_velocity < 0.0) {
-				j_acc = CLAMP(j_old + j, 0.0, j_max);
-			} else {
-				j_acc = CLAMP(j_old + j, -j_max, 0.0);
-			}
-		} else {
-			j_acc = CLAMP(j_old + j, -j_max, j_max);
-		}
-		j = j_acc - j_old;
-
-		A->apply_torque_impulse(-j * A->get_inv_inertia());
-		B->apply_torque_impulse(j * B->get_inv_inertia());
-	}
 
 	Vector2 impulse = M.basis_xform(bias - rel_vel - Vector2(softness, softness) * P);
+
+	if ((angular_limit_enabled && is_joint_at_limit) && B) {
+		real_t wr = B->get_angular_velocity() - A->get_angular_velocity();
+		real_t j = bias_velocity - wr;
+		if (A->get_inv_inertia() != 0.0) {
+			A->apply_torque_impulse(-j / A->get_inv_inertia() / A->get_space()->get_solver_iterations());
+		}
+		if (B->get_inv_inertia() != 0.0) {
+			B->apply_torque_impulse(j / B->get_inv_inertia() / B->get_space()->get_solver_iterations());
+		}
+	}
+	if (motor_enabled && !is_joint_at_limit && motor_target_velocity != 0.0 && B) {
+		if (A->get_inv_inertia() != 0.0) {
+			A->apply_torque_impulse(-motor_target_velocity * p_step / A->get_inv_inertia() / A->get_space()->get_solver_iterations());
+		}
+		if (B->get_inv_inertia() != 0.0) {
+			B->apply_torque_impulse(motor_target_velocity * p_step / B->get_inv_inertia() / B->get_space()->get_solver_iterations());
+		}
+	}
 
 	if (dynamic_A) {
 		A->apply_impulse(-impulse, rA);
@@ -343,14 +317,6 @@ GodotPinJoint2D::GodotPinJoint2D(const Vector2 &p_pos, GodotBody2D *p_body_a, Go
 	initial_B_friction = p_body_b ? p_body_b->get_friction() : 0.0;
 	initial_A_id = p_body_a->get_instance_id();
 	initial_B_id = p_body_b ? p_body_b->get_instance_id() : ObjectID();
-	debug_value_output("init", "init");
-	debug_value_output("initial_friction_A", String::num(initial_A_friction));
-	debug_value_output("initial_friction_B", String::num(initial_B_friction));
-	debug_value_output("initial_A_id", itos(uint64_t(initial_A_id)));
-	debug_value_output("initial_B_id", itos(uint64_t(initial_B_id)));
-	// ID値のデバッグ出力は一時的に無効化
-	// debug_value_output("initial_A_id", initial_A_id);
-	// debug_value_output("initial_B_id", initial_B_id);
 
 	anchor_A = p_body_a->get_inv_transform().xform(p_pos);
 	anchor_B = p_body_b ? p_body_b->get_inv_transform().xform(p_pos) : p_pos;
@@ -359,7 +325,6 @@ GodotPinJoint2D::GodotPinJoint2D(const Vector2 &p_pos, GodotBody2D *p_body_a, Go
 	if (p_body_b) {
 		p_body_b->add_constraint(this, 1);
 		initial_angle = B->get_transform().get_rotation() - A->get_transform().get_rotation();
-		debug_value_output("initial_angle", String::num(initial_angle) + ", " + String::num(Math::rad_to_deg(initial_angle)));
 	}
 }
 
@@ -627,49 +592,4 @@ GodotDampedSpringJoint2D::GodotDampedSpringJoint2D(const Vector2 &p_anchor_a, co
 
 	A->add_constraint(this, 0);
 	B->add_constraint(this, 1);
-}
-
-void debug_value_output(const char *prefix, const String &value) {
-	static FILE *f = nullptr;
-	if (!f) {
-		f = fopen("/tmp/godot_debug.txt", "w");
-	}
-
-	if (f) {
-		fprintf(f, "%s: %s\n", prefix, value.utf8().get_data());
-		fflush(f);
-	} else {
-		debug_value_output("################# debug_value_output", "f is nullptr");
-	}
-}
-
-void debug_int_output(const char *prefix, int value) {
-	static FILE *f = nullptr;
-	if (!f) {
-		f = fopen("/tmp/godot_debug.txt", "w");
-	}
-
-	if (f) {
-		fprintf(f, "%s: %d\n", prefix, value);
-		fflush(f);
-	} else {
-		debug_value_output("################# debug_int_output", "f is nullptr");
-	}
-}
-
-void debug_angle_calculation(const char *prefix, real_t angle_rad) {
-	static FILE *f = nullptr;
-	if (!f) {
-		f = fopen("/tmp/godot_angle_debug.txt", "w");
-	}
-
-	if (f) {
-		fprintf(f, "%s: %.6f rad (%.6f deg)\n",
-				prefix,
-				angle_rad,
-				Math::rad_to_deg(angle_rad));
-		fflush(f); // すぐに書き込みを反映
-	} else {
-		debug_value_output("################# debug_angle_calculation", "f is nullptr");
-	}
 }
